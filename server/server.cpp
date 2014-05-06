@@ -16,37 +16,70 @@
 #define SERVER_PORT 8089
 #define MAX_BUFFER 1024
 
-std::map<std::string, int> client_list;
+struct client_info {
+    int fd;
+    client_info (int _fd): fd(_fd){};
+};
 
-char socket_buf[MAX_BUFFER];
+std::map<std::string, client_info> client_list;
 
-void add_client(const std::string& str, const int ip) {
-//  client_list.push_back(str);
-  sockaddr_in client_addr;
-  client_addr.sin_family = AF_INET;
-  client_addr.sin_addr.s_addr = 
+void add_client(const std::string& str, const int client_fd) {
+   client_list.insert(std::make_pair(str, client_info(client_fd)));
 }
 
 void remove_client(const std::string& str) {
-  /*
-  std::remove_if(client_list.begin(), client_list.end(), [&](const std::string& name) {
-    return name == str;
-  });
-  */
+   client_list.erase(str);
 }
 
-void transfer_msg(const std::string& client_from, const std::string& client_to, char *msg){
+void transfer_msg(const std::string& client_from, const std::string& client_to, char *msg, int len){
+  int client_to_fd = client_list.find(client_to)->second.fd;
+  send(client_to_fd, msg, len, 0);
 }
 
 void send_client_list(int client_fd) {
+  char *buf = (char*)malloc(sizeof(char)*1024);
+  char *p = buf;
+  for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
+    int len = x->first.size();
+    *p++ = len;
+    for (int i = 0; i < len; ++ i) {
+	*p++ = x->first[i];
+    }
+  }
+  send(client_fd, buf, p-buf, 0);
 }
 
 void listen_client(int client_fd) {
+    char *socket_buf = (char*)malloc(MAX_BUFFER);
     int len;
+    char username[64];
+    
     while ((len = recv(client_fd, socket_buf, MAX_BUFFER, 0)) > 0) {
-      if (len < 4) {
+      int code = socket_buf[0];
+      int username_len = 0;
+      
+      username_len = socket_buf[1];
+      strncpy(username, socket_buf+2, username_len);
+      
+      switch(code) {
+	case 0x00: // connect
+	  add_client(username, client_fd);
+	  send_client_list(client_fd);
+	  break;
+	case 0x01: // leave
+	  remove_client(username);
+	  break;
+	case 0x11: // send message 
+	  {
+	    char client_to[64];
+	    int client_to_len = socket_buf[2+username_len];
+	    strncpy(client_to, socket_buf+2+username_len+1, client_to_len);
+	    transfer_msg(username, client_to, socket_buf+2+username_len+1+client_to_len, strlen(socket_buf)-3-username_len-client_to_len);
+	  }
+	  break;
       }
     }
+    delete socket_buf;
 }
 
 int main() {
