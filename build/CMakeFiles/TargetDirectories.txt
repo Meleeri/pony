@@ -1,2 +1,0 @@
-/home/li/projects/pony/build/CMakeFiles/pony.dir
-/home/li/projects/pony/build/server/CMakeFiles/server.dir
