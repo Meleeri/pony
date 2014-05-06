@@ -1,0 +1,1 @@
+/usr/bin/c++   -g    CMakeFiles/pony.dir/main.o  -o pony -rdynamic 
