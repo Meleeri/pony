@@ -13,7 +13,7 @@
 
 #include <boost/thread.hpp>
 
-#define SERVER_PORT 8089
+#define SERVER_PORT 64321
 #define MAX_BUFFER 1024
 
 struct client_info {
@@ -23,27 +23,8 @@ struct client_info {
 
 std::map<std::string, client_info> client_list;
 
-void add_client(const std::string& str, const int client_fd) {
-   /*
-    * notify the newly connected client the client_list
-    */
-   char *buf = (char*)malloc(sizeof(char)*1024);
-   char *p = buf;
-   for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
-    int len = x->first.size();
-    *p++ = len;
-    for (int i = 0; i < len; ++ i) {
-	*p++ = x->first[i];
-    }
-    *p++ = '\0';
-   }
-   send(client_fd, buf, p-buf, 0); 
-   
-   /*
-    * add new client
-    */
-   client_list.insert(std::make_pair(str, client_info(client_fd)));
-   
+void add_client(const std::string& str, int client_fd) {
+   char buf[1024];
    /*
     * tell all clients that a new user has logged in
     */
@@ -54,11 +35,41 @@ void add_client(const std::string& str, const int client_fd) {
    for (auto x = str.begin(); x != str.end(); ++ x) {
      buf[i++] = *x;
    }
+   
    for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
-     send(x->second.fd, buf, i, 0);
+     while (send((x->second).fd, buf, i, 0) != i);
    }
    
-   delete buf;
+   /*
+    * add new client
+    */
+   client_list.insert(std::make_pair(str, client_info(client_fd)));
+   
+   
+   /*
+    * notify the newly connected client the client_list
+    */
+
+   char *p = buf;
+   
+   *p++ = 0x03;
+   for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
+    int len = x->first.size();
+    *p++ = len;
+    for (int i = 0; i < len; ++ i) {
+	*p++ = x->first[i];
+    }
+   }
+   while (send(client_fd, buf, p-buf, 0) != p-buf); 
+}
+
+void invalid_login(int client_fd) {
+  char buf[16];
+  int i = 0;
+  buf[i++] = 0x04;
+  buf[i++] = 0;
+  buf[i++] = 0;
+  send(client_fd, buf, i, 0);
 }
 
 void remove_client(const std::string& str) {
@@ -70,7 +81,7 @@ void remove_client(const std::string& str) {
    /*
     * tell all other clients that this client has left
     */
-   char *buf = (char*)malloc(sizeof(char)*1024);
+   char buf[1024];
    int i = 0;
    buf[i++] = 0x01; //leave
    buf[i++] = str.size();
@@ -79,24 +90,22 @@ void remove_client(const std::string& str) {
      buf[i++] = *x;
    }
    
-   for (auto x = client_list.begin; x != client_list.end(); ++ x) {
-     send(x->second.fd, buf, i, 0);
+   for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
+     while(send((x->second).fd, buf, i, 0) != i);
    }
-   
-   delete buf;
 }
 
-void transfer_msg(const std::string& client_from, const std::string& client_to, char *msg, int len){
-  int client_to_fd = client_list.find(client_to)->second.fd;
-  send(client_to_fd, msg, len, 0);
-}
-
-void send_client_list(int client_fd) {
-
+void print_list() {
+  printf("Client number: %d\n", client_list.size());
+  
+  for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
+    printf("%s\n", x->first.c_str());
+  }
 }
 
 void listen_client(int client_fd) {
-    char *socket_buf = (char*)malloc(MAX_BUFFER);
+    char socket_buf[2048];
+    
     int len;
     char username[64];
     
@@ -106,26 +115,45 @@ void listen_client(int client_fd) {
       
       username_len = socket_buf[1];
       strncpy(username, socket_buf+2, username_len);
+      username[username_len] = '\0';
       
       switch(code) {
 	case 0x00: // login
-	  add_client(username, client_fd);
-	  send_client_list(client_fd);
+	{
+	  auto x = client_list.find(username);
+	  if (x != client_list.end()) {
+	    invalid_login(client_fd);
+	  }
+	  else {
+	    add_client(username, client_fd);
+	    printf("user %s has logged in.\n", username);
+	    print_list();
+	  }
+	}
 	  break;
 	case 0x01: // leave
+	{
 	  remove_client(username);
+	  
+	  printf("user %s has left.\n", username);
+	}
 	  break;
-	case 0x11: // send message 
+	case 0x02: // send message 
 	  {
 	    char client_to[64];
 	    int client_to_len = socket_buf[2+username_len];
 	    strncpy(client_to, socket_buf+2+username_len+1, client_to_len);
-	    transfer_msg(username, client_to, socket_buf+2+username_len+1+client_to_len, strlen(socket_buf)-3-username_len-client_to_len);
+	    
+	    client_to[client_to_len] = '\0';
+	    int client_to_fd = client_list.find(client_to)->second.fd;
+	    while (send(client_to_fd, socket_buf, len, 0) < 0);    
+	    
+	    printf("user %s has sent a message\n", username);
 	  }
 	  break;
       }
     }
-    delete socket_buf;
+    close(client_fd);
 }
 
 int main() {
@@ -154,9 +182,12 @@ int main() {
 	continue;
     }
     else {
+	printf("Spawning new thread.\n");
         boost::thread([&]() {
 	  listen_client(client_fd);
 	});
     }
   }
+  close(server_fd);
+  return 0;
 }
