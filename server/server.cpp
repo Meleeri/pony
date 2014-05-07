@@ -24,11 +24,66 @@ struct client_info {
 std::map<std::string, client_info> client_list;
 
 void add_client(const std::string& str, const int client_fd) {
+   /*
+    * notify the newly connected client the client_list
+    */
+   char *buf = (char*)malloc(sizeof(char)*1024);
+   char *p = buf;
+   for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
+    int len = x->first.size();
+    *p++ = len;
+    for (int i = 0; i < len; ++ i) {
+	*p++ = x->first[i];
+    }
+    *p++ = '\0';
+   }
+   send(client_fd, buf, p-buf, 0); 
+   
+   /*
+    * add new client
+    */
    client_list.insert(std::make_pair(str, client_info(client_fd)));
+   
+   /*
+    * tell all clients that a new user has logged in
+    */
+   
+   int i = 0;
+   buf[i++] = 0x00; //login
+   buf[i++] = str.size();
+   for (auto x = str.begin(); x != str.end(); ++ x) {
+     buf[i++] = *x;
+   }
+   for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
+     send(x->second.fd, buf, i, 0);
+   }
+   
+   delete buf;
 }
 
 void remove_client(const std::string& str) {
+  /*
+   * remove client
+   */
    client_list.erase(str);
+   
+   /*
+    * tell all other clients that this client has left
+    */
+   char *buf = (char*)malloc(sizeof(char)*1024);
+   int i = 0;
+   buf[i++] = 0x01; //leave
+   buf[i++] = str.size();
+   
+   for (auto x = str.begin(); x != str.end(); ++ x) {
+     buf[i++] = *x;
+   }
+   
+   for (auto x = client_list.begin; x != client_list.end(); ++ x) {
+     send(x->second.fd, buf, i, 0);
+   }
+   
+   delete buf;
 }
 
 void transfer_msg(const std::string& client_from, const std::string& client_to, char *msg, int len){
@@ -37,16 +92,7 @@ void transfer_msg(const std::string& client_from, const std::string& client_to, 
 }
 
 void send_client_list(int client_fd) {
-  char *buf = (char*)malloc(sizeof(char)*1024);
-  char *p = buf;
-  for (auto x = client_list.begin(); x != client_list.end(); ++ x) {
-    int len = x->first.size();
-    *p++ = len;
-    for (int i = 0; i < len; ++ i) {
-	*p++ = x->first[i];
-    }
-  }
-  send(client_fd, buf, p-buf, 0);
+
 }
 
 void listen_client(int client_fd) {
@@ -62,7 +108,7 @@ void listen_client(int client_fd) {
       strncpy(username, socket_buf+2, username_len);
       
       switch(code) {
-	case 0x00: // connect
+	case 0x00: // login
 	  add_client(username, client_fd);
 	  send_client_list(client_fd);
 	  break;

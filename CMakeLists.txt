@@ -1,8 +1,6 @@
 project(pony)
 
-add_executable(pony main.cpp)
-
-install(TARGETS pony RUNTIME DESTINATION bin)
+find_package(QT4 REQUIRED)
 
 add_subdirectory(server)
 add_subdirectory(client)
